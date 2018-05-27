@@ -6,16 +6,14 @@
 using namespace std;  // Bad practice :(
 
 const int kLaneSizeMeters = 4;
-const int kSafeDistanceMeters = 30;
+const int kSafeDistanceBack = 10;
+const int kSafeDistanceFront = 30;
 const double kInf = std::numeric_limits<double>::max();
 
 struct Predictions {
   double ego_s;
   vector<double> other_cars_s;
   vector<double> other_cars_d;
-};
-
-class Trajectory {
 };
 
 enum Lane {
@@ -53,7 +51,7 @@ class FST {
 
     // Find the state with minimum cost.
     for (const State& state : GetPossibleNextStates()) {
-      double cost = 0.9 * CostOfCollision(predictions, state) + 0.2 * CostOfChange(state);
+      double cost = 0.95 * CostOfCollision(predictions, state) + 0.05 * CostOfChange(state);
       if (cost < min_cost) {
         min_cost = cost;
         min_cost_state = state;
@@ -97,7 +95,15 @@ class FST {
       if (CarIsOnLane(next_lane, predictions.other_cars_d[i])) {
         double s = predictions.other_cars_s[i];
         double ego_s = predictions.ego_s;
-        if ((s > ego_s) && (s - ego_s < kSafeDistanceMeters)) {
+        bool too_close = ((s > ego_s) && (s - ego_s < kSafeDistanceFront));
+
+        // When changing lanes, we need to be mindful of cars that are slightly behind us in the
+        // target lane; they might hit us from behind.
+        if (next_state == State::LANE_CHANGE_LEFT || next_state == State::LANE_CHANGE_RIGHT) {
+          too_close |= ((s < ego_s) && (ego_s - s < kSafeDistanceBack));
+        }
+
+        if (too_close) {
           return next_state == State::SLOW_DOWN ? 0.0 : 1.0;
         }
       }
