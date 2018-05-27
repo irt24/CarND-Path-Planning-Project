@@ -15,7 +15,6 @@
 using namespace std;
 using json = nlohmann::json;
 
-const int kLaneSizeMeters = 4;
 const double kTimeStepSeconds = 0.02;
 const double kMaxSpeedMph = 49.5;
 
@@ -170,11 +169,6 @@ double get_middle(int lane) {
   return kLaneSizeMeters / 2 + kLaneSizeMeters * lane;
 }
 
-bool is_in_lane(int lane, double d) {
-  double middle = get_middle(lane);
-  return (d > middle - kLaneSizeMeters / 2) && (d < middle + kLaneSizeMeters / 2);
-}
-
 int main() {
   uWS::Hub h;
 
@@ -258,26 +252,25 @@ int main() {
           }
 
           // Predict where the other cars will be in the future.
-          vector<double> other_car_s;
+          vector<double> other_cars_d;
+          vector<double> other_cars_s;
           for (const vector<double>& other_car : sensor_fusion) {
-            if (is_in_lane(fst.current_lane, other_car[kSensorFusionD])) {
-              double vx = other_car[kSensorFusionVx];
-              double vy = other_car[kSensorFusionVy];
-              double s = other_car[kSensorFusionS];
-
-              double v = sqrt(vx * vx + vy * vy);
-              s += previous_path_x.size() * kTimeStepSeconds * v;
-              other_car_s.push_back(s);
-            } 
+            double s = other_car[kSensorFusionS];
+            double vx = other_car[kSensorFusionVx];
+            double vy = other_car[kSensorFusionVy];
+            double v = sqrt(vx * vx + vy * vy);
+            s += previous_path_x.size() * kTimeStepSeconds * v;
+            other_cars_s.push_back(s);
+            other_cars_d.push_back(other_car[kSensorFusionD]);
           }
 
           Predictions predictions;
           predictions.ego_s = car_s;
-          predictions.other_car_s = other_car_s;
+          predictions.other_cars_s = other_cars_s;
+          predictions.other_cars_d = other_cars_d;
           fst.NextState(predictions);
 
-          if (fst.current_state == State::LANE_CHANGE_LEFT ||
-              fst.current_state == State::LANE_CHANGE_RIGHT) {
+          if (fst.current_state == State::SLOW_DOWN) {
             ref_v -= mps_to_mph(0.1); 
           } else if (ref_v < kMaxSpeedMph) {
             ref_v += mps_to_mph(0.1); 

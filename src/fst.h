@@ -5,12 +5,14 @@
 
 using namespace std;  // Bad practice :(
 
+const int kLaneSizeMeters = 4;
 const int kSafeDistanceMeters = 30;
 const double kInf = std::numeric_limits<double>::max();
 
 struct Predictions {
   double ego_s;
-  std::vector<double> other_car_s;
+  vector<double> other_cars_s;
+  vector<double> other_cars_d;
 };
 
 class Trajectory {
@@ -29,6 +31,17 @@ enum State {
   LANE_CHANGE_RIGHT,
 };
 
+namespace {
+double GetMiddleOfLane(Lane lane) {
+  return kLaneSizeMeters / 2 + kLaneSizeMeters * lane;
+}
+
+bool CarIsOnLane(Lane lane, double d) {
+  double middle = GetMiddleOfLane(lane);
+  return (d > middle - kLaneSizeMeters / 2) && (d < middle + kLaneSizeMeters / 2);
+}
+}  // end anonymous namespace
+
 class FST {
  public:
   FST(Lane initial_lane) : current_lane(initial_lane) {}
@@ -40,14 +53,15 @@ class FST {
 
     // Find the state with minimum cost.
     for (const State& state : GetPossibleNextStates()) {
-      double cost = cost1(predictions, state); 
+      double cost = 0.9 * CostOfCollision(predictions, state) + 0.2 * CostOfChange(state);
       if (cost < min_cost) {
         min_cost = cost;
         min_cost_state = state;
       }
     };
 
-    TransitionTo(min_cost_state);
+    current_state = min_cost_state; 
+    current_lane = GetLaneForState(current_state);
   }
 
   Lane current_lane;
@@ -64,33 +78,41 @@ class FST {
     return valid_states;
   }
 
-  void TransitionTo(const State& state) {
-    current_state = state;
-    if (state == State::LANE_CHANGE_LEFT) {
-      current_lane = static_cast<Lane>(static_cast<int>(current_lane) - 1);
-    } else if (state == State::LANE_CHANGE_RIGHT) {
-      current_lane = static_cast<Lane>(static_cast<int>(current_lane) + 1);
+  Lane GetLaneForState(const State& state) const {
+    switch (state) {
+      case State::LANE_KEEP:
+      case State::SLOW_DOWN: return current_lane;
+      case State::LANE_CHANGE_LEFT:
+        return static_cast<Lane>(static_cast<int>(current_lane) - 1);
+      case State::LANE_CHANGE_RIGHT:
+        return static_cast<Lane>(static_cast<int>(current_lane) + 1);
     }
   }
 
-  double cost1(const Predictions& predictions, const State& next_state) const {
-    if (current_lane == Lane::LEFT) {
-      // Keep the lane.
-      return next_state == State::LANE_KEEP ? 0.0 : kInf; 
-    }
+  double CostOfCollision(const Predictions& predictions,
+                         const State& next_state) const {
+    Lane next_lane = GetLaneForState(next_state);
 
-    if (next_state == State::LANE_CHANGE_LEFT) {
-      // Figure out whether any of the other cars are too close.
-      for (const double other_s : predictions.other_car_s) {
-        if ((other_s > predictions.ego_s) &&
-            (other_s - predictions.ego_s < kSafeDistanceMeters)) {
-          cout << "Too close. Changing lanes to left." << endl;
-          return 0.0;
+    for (int i = 0; i < predictions.other_cars_d.size(); i++) {
+      if (CarIsOnLane(next_lane, predictions.other_cars_d[i])) {
+        double s = predictions.other_cars_s[i];
+        double ego_s = predictions.ego_s;
+        if ((s > ego_s) && (s - ego_s < kSafeDistanceMeters)) {
+          return next_state == State::SLOW_DOWN ? 0.1 : 1.0;
         }
       }
     }
 
-    return kInf;
+    return 0.0;
+  }
+
+  double CostOfChange(const State& next_state) const {
+    switch (next_state) {
+      case State::LANE_KEEP: return 0.0;
+      case State::SLOW_DOWN: return 0.1;
+      case State::LANE_CHANGE_RIGHT:
+      case State::LANE_CHANGE_LEFT: return 0.9;
+    }
   }
 
   const set<State> all_states =
