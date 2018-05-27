@@ -24,34 +24,17 @@ enum Lane {
 
 enum State {
   LANE_KEEP,
-  PREPARE_LANE_CHANGE_LEFT,
+  SLOW_DOWN,
   LANE_CHANGE_LEFT,
-  PREPARE_LANE_CHANGE_RIGHT,
   LANE_CHANGE_RIGHT,
 };
 
-namespace {
-bool next_state_possible_from_lane(State next_state, Lane lane) {
-  if (lane == Lane::LEFT &&
-      (next_state == State::PREPARE_LANE_CHANGE_LEFT ||
-       next_state == State::LANE_CHANGE_LEFT)) {
-    return false;
-  }
-  if (lane == Lane::RIGHT &&
-      (next_state == State::PREPARE_LANE_CHANGE_RIGHT ||
-       next_state == State::LANE_CHANGE_RIGHT)) {
-    return false;
-  }
-  return true;
-}
-}  // end anonymous namespace.
-
 class FST {
  public:
-  FST(Lane initial_lane) : lane(initial_lane) {}
+  FST(Lane initial_lane) : current_lane(initial_lane) {}
 
   double cost1(const Predictions& predictions, const State& next_state) const {
-    if (lane == Lane::LEFT) {
+    if (current_lane == Lane::LEFT) {
       // Keep the lane.
       return next_state == State::LANE_KEEP ? 0.0 : kInf; 
     }
@@ -74,15 +57,12 @@ class FST {
   static double cost3() { return 0.0; }
 
   // The transition function.
-  State NextState(const Predictions& predictions) {
+  void NextState(const Predictions& predictions) {
     State min_cost_state;
     double min_cost = kInf; 
 
     // Find the state with minimum cost.
-    for (const State& state : possible_transitions.find(current_state)->second) {
-      if (!next_state_possible_from_lane(state, lane)) {
-        continue;
-      }
+    for (const State& state : GetPossibleNextStates()) {
       double cost = cost1(predictions, state); 
       if (cost < min_cost) {
         min_cost = cost;
@@ -90,14 +70,7 @@ class FST {
       }
     };
 
-    current_state = min_cost_state;
-    if (current_state == State::LANE_CHANGE_LEFT) {
-      lane = static_cast<Lane>(static_cast<int>(lane) - 1);
-    } else if (current_state == State::LANE_CHANGE_RIGHT) {
-      lane = static_cast<Lane>(static_cast<int>(lane) + 1);
-    }
-    
-    return current_state;
+    TransitionTo(min_cost_state);
   }
 
   Trajectory GenerateTrajectory(State state) {
@@ -105,32 +78,38 @@ class FST {
     return Trajectory();
   }
 
-  Lane lane;
+  set<State> GetPossibleNextStates() const {
+    set<State> valid_states = valid_transitions.find(current_state)->second;
+    if (current_lane == Lane::LEFT) {
+      valid_states.erase(State::LANE_CHANGE_LEFT);
+    } else if (current_lane == Lane::RIGHT) {
+      valid_states.erase(State::LANE_CHANGE_RIGHT);
+    }
+    return valid_states;
+  }
+
+  void TransitionTo(const State& state) {
+    current_state = state;
+    if (state == State::LANE_CHANGE_LEFT) {
+      current_lane = static_cast<Lane>(static_cast<int>(current_lane) - 1);
+    } else if (state == State::LANE_CHANGE_RIGHT) {
+      current_lane = static_cast<Lane>(static_cast<int>(current_lane) + 1);
+    }
+  }
+
+  Lane current_lane;
   State current_state = LANE_KEEP;
 
-  const map<State, set<State>> possible_transitions = {
-    {LANE_KEEP,
-        {LANE_KEEP,
-         // TODO: Remove LANE_CHANGE_LEFT and LANE_CHANGE_RIGHT.
-         LANE_CHANGE_LEFT,
-         LANE_CHANGE_RIGHT,
-         PREPARE_LANE_CHANGE_LEFT,
-         PREPARE_LANE_CHANGE_RIGHT}},
-    {PREPARE_LANE_CHANGE_LEFT,
-        {LANE_KEEP,
-         PREPARE_LANE_CHANGE_LEFT,
-         LANE_CHANGE_LEFT}},
-    {LANE_CHANGE_LEFT,
-        {LANE_CHANGE_LEFT,
-         LANE_KEEP}},
-    {PREPARE_LANE_CHANGE_RIGHT,
-        {LANE_KEEP,
-         PREPARE_LANE_CHANGE_RIGHT,
-         LANE_CHANGE_RIGHT}},
-    {LANE_CHANGE_RIGHT,
-        {LANE_CHANGE_RIGHT,
-         LANE_KEEP}}
-  };
+  const set<State> all_states =
+      {LANE_KEEP,
+       SLOW_DOWN,
+       LANE_CHANGE_LEFT,
+       LANE_CHANGE_RIGHT};
+  const map<State, set<State>> valid_transitions =
+      {{LANE_KEEP, all_states},
+       {SLOW_DOWN, all_states},
+       {LANE_CHANGE_LEFT, {LANE_KEEP}},
+       {LANE_CHANGE_RIGHT, {LANE_KEEP}}};
 };
 
 #endif  // FST_H

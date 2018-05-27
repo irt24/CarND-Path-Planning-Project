@@ -260,7 +260,7 @@ int main() {
           // Predict where the other cars will be in the future.
           vector<double> other_car_s;
           for (const vector<double>& other_car : sensor_fusion) {
-            if (is_in_lane(fst.lane, other_car[kSensorFusionD])) {
+            if (is_in_lane(fst.current_lane, other_car[kSensorFusionD])) {
               double vx = other_car[kSensorFusionVx];
               double vy = other_car[kSensorFusionVy];
               double s = other_car[kSensorFusionS];
@@ -274,10 +274,10 @@ int main() {
           Predictions predictions;
           predictions.ego_s = car_s;
           predictions.other_car_s = other_car_s;
-          State state = fst.NextState(predictions);
+          fst.NextState(predictions);
 
-          if (state == State::LANE_CHANGE_LEFT ||
-              state == State::LANE_CHANGE_RIGHT) {
+          if (fst.current_state == State::LANE_CHANGE_LEFT ||
+              fst.current_state == State::LANE_CHANGE_RIGHT) {
             ref_v -= mps_to_mph(0.1); 
           } else if (ref_v < kMaxSpeedMph) {
             ref_v += mps_to_mph(0.1); 
@@ -311,9 +311,9 @@ int main() {
           push_point(ref_x, ref_y, &ptsx, &ptsy);
 
           // In Frenet coordinates, add points that are spaced evenly 30m apart, ahead of the starting reference.
-          push_point(getXY(car_s + 30, get_middle(fst.lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
-          push_point(getXY(car_s + 60, get_middle(fst.lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
-          push_point(getXY(car_s + 90, get_middle(fst.lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 30, get_middle(fst.current_lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 60, get_middle(fst.current_lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 90, get_middle(fst.current_lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
 
           // Transform the points to the ego car's local coordinates.
           // This means that the last point of the previous path is at origin (x, y, yaw) = (0, 0, 0).
