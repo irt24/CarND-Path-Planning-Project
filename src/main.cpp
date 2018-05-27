@@ -8,9 +8,26 @@
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
+#include "spline.h"
+#include <assert.h>
 
 using namespace std;
 using json = nlohmann::json;
+
+const int kLaneSizeMeters = 4;
+const double kTimeStepSeconds = 0.02;
+const double kMaxSpeedMph = 49.5;
+
+const int kSensorFusionId = 0;
+const int kSensorFusionX = 1;
+const int kSensorFusionY = 2;
+const int kSensorFusionVx = 3;
+const int kSensorFusionVy = 4;
+const int kSensorFusionS = 5;
+const int kSensorFusionD = 6;
+
+const int kNumPointsAhead = 50;
+const int kSafeDistanceMeters = 30;
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -131,6 +148,33 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
   return {x, y};
 }
 
+void push_point(const double x, const double y, vector<double>* ptsx, vector<double>* ptsy) {
+  ptsx->push_back(x);
+  ptsy->push_back(y);
+}
+
+void push_point(const vector<double>& xy, vector<double>* ptsx, vector<double>* ptsy) {
+  assert(xy.size() == 2);
+  push_point(xy[0], xy[1], ptsx, ptsy);
+}
+
+double mph_to_mps(double mph) {
+  return mph / 2.24;
+}
+
+double mps_to_mph(double mps) {
+  return mps * 2.24;
+}
+
+double get_middle(int lane) {
+  return kLaneSizeMeters / 2 + kLaneSizeMeters * lane;
+}
+
+bool is_in_lane(int lane, double d) {
+  double middle = get_middle(lane);
+  return (d > middle - kLaneSizeMeters / 2) && (d < middle + kLaneSizeMeters / 2);
+}
+
 int main() {
   uWS::Hub h;
 
@@ -154,27 +198,29 @@ int main() {
     double x;
     double y;
     float s;
-    float d_x;
-    float d_y;
+    float dx;
+    float dy;
     iss >> x;
     iss >> y;
     iss >> s;
-    iss >> d_x;
-    iss >> d_y;
-    map_waypoints_x.push_back(x);
-    map_waypoints_y.push_back(y);
+    iss >> dx;
+    iss >> dy; 
+    push_point(x, y, &map_waypoints_x, &map_waypoints_y);
+    push_point(dx, dy, &map_waypoints_dx, &map_waypoints_dy);
     map_waypoints_s.push_back(s);
-    map_waypoints_dx.push_back(d_x);
-    map_waypoints_dy.push_back(d_y);
   }
+
+  double ref_v = 0;  // Reference velocity.
+  int lane = 1;  // Middle lane.
 
   h.onMessage([&map_waypoints_x,
                &map_waypoints_y,
                &map_waypoints_s,
                &map_waypoints_dx,
-               &map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws,
-                                  char *data, size_t length,
-                                  uWS::OpCode opCode) {
+               &map_waypoints_dy,
+               &ref_v, &lane](uWS::WebSocket<uWS::SERVER> ws,
+                              char *data, size_t length,
+                              uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -207,11 +253,115 @@ int main() {
           // Sensor Fusion Data, a list of all other cars on the same side of the road.
           auto sensor_fusion = j[1]["sensor_fusion"];
 
-          json msgJson;
+          if (!previous_path_x.empty()) {
+             car_s = end_path_s;
+          }
+
+          // Slow down if any of the other cars are too close.
+          bool too_close = false;
+          for (const vector<double>& other_car : sensor_fusion) {
+            if (is_in_lane(lane, other_car[kSensorFusionD])) {
+              double vx = other_car[kSensorFusionVx];
+              double vy = other_car[kSensorFusionVy];
+              double s = other_car[kSensorFusionS];
+
+              // Predict where the other car will be in the future.
+              double v = sqrt(vx * vx + vy * vy);
+              s += previous_path_x.size() * kTimeStepSeconds * v;
+
+              if (s > car_s && (s - car_s) < kSafeDistanceMeters) {
+                too_close = true;
+                // Attempt a lane change.
+                // TODO: Check that it's safe to do so (e.g. that there isn't another car on that lane within 30 / 100 m).
+                // If it's not safe to change lanes left, we could instead attempt to change lanes right, where the same
+                // safety considerations apply. The FSM in the class might help with this decision.
+                if (lane > 0) {
+                  lane = 0;
+                } 
+              }
+            } 
+          }
+
+          if (too_close) {
+            ref_v -= mps_to_mph(0.1); 
+          } else if (ref_v < kMaxSpeedMph) {
+            ref_v += mps_to_mph(0.1); 
+          }
+
+          // Create a list of widely spaced (x, y) waypoints, evenly spaced at 30m.
+          // Later, these points will be interpolated using a spline.
+          vector<double> ptsx;
+          vector<double> ptsy;
+
+          // Reference state: either where the ego car is, or at the previous path's endpoint.
+          double ref_x, ref_y, ref_yaw, ref_x_prev, ref_y_prev;
+
+          if (previous_path_x.size() < 2) {
+            // Set the reference state to the current position of the ego car.
+            ref_x = car_x;
+            ref_y = car_y;
+            ref_x_prev = car_x - cos(car_yaw);
+            ref_y_prev = car_y - sin(car_yaw);
+            ref_yaw = deg2rad(car_yaw);
+          } else {
+            // Set the reference state to the previous path's endpoint.
+            ref_x = previous_path_x[previous_path_x.size() - 1];
+            ref_y = previous_path_y[previous_path_y.size() - 1];
+            ref_x_prev = previous_path_x[previous_path_x.size() - 2];
+            ref_y_prev = previous_path_y[previous_path_y.size() - 2];
+            ref_yaw = atan2(ref_y - ref_y_prev, ref_x - ref_x_prev);
+          }
+
+          push_point(ref_x_prev, ref_y_prev, &ptsx, &ptsy);
+          push_point(ref_x, ref_y, &ptsx, &ptsy);
+
+          // In Frenet coordinates, add points that are spaced evenly 30m apart, ahead of the starting reference.
+          push_point(getXY(car_s + 30, get_middle(lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 60, get_middle(lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 90, get_middle(lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+
+          // Transform the points to the ego car's local coordinates.
+          // This means that the last point of the previous path is at origin (x, y, yaw) = (0, 0, 0).
+          for (int i = 0; i < ptsx.size(); i++) {
+            double shift_x = ptsx[i] - ref_x;
+            double shift_y = ptsy[i] - ref_y;
+            ptsx[i] = shift_x * cos(-ref_yaw) - shift_y * sin(-ref_yaw);
+            ptsy[i] = shift_x * sin(-ref_yaw) + shift_y * cos(-ref_yaw);
+          }
+
+          // Interpolate the points.
+          tk::spline spline;
+          spline.set_points(ptsx, ptsy);
+          
+          // Define the actual points we will use for the planner.
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
-          // TODO: define a path made up of (x, y) points that the car will visit sequentially every .02 seconds.
+          // Start with all of the previous path points; these are the points that the car hasn't yet reached. 
+          next_x_vals.insert(next_x_vals.end(), previous_path_x.begin(), previous_path_x.end());
+          next_y_vals.insert(next_y_vals.end(), previous_path_y.begin(), previous_path_y.end());
+
+          // Calculate how to break up spline points so that we travel at our reference velocity.
+          double target_x = 30;
+          double target_y = spline(target_x);
+          double target_dist = sqrt(target_x * target_x + target_y * target_y);
+
+          double x_offset = 0;
+          for (int i = 1; i <= kNumPointsAhead - previous_path_x.size(); i++) {
+            double N = target_dist / (kTimeStepSeconds * mph_to_mps(ref_v));
+            double x_point = x_offset + target_x / N;
+            double y_point = spline(x_point); 
+            x_offset = x_point;
+
+            // Transform from local coordinates back into map coordinates.
+            double x_ref = x_point;
+            double y_ref = y_point;
+            x_point = x_ref * cos(ref_yaw) - y_ref * sin(ref_yaw);
+            y_point = x_ref * sin(ref_yaw) + y_ref * cos(ref_yaw);
+            push_point(x_point + ref_x, y_point + ref_y, &next_x_vals, &next_y_vals);
+          }
+
+          json msgJson;
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
 
