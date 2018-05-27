@@ -98,7 +98,7 @@ class FST {
         double s = predictions.other_cars_s[i];
         double ego_s = predictions.ego_s;
         if ((s > ego_s) && (s - ego_s < kSafeDistanceMeters)) {
-          return next_state == State::SLOW_DOWN ? 0.1 : 1.0;
+          return next_state == State::SLOW_DOWN ? 0.0 : 1.0;
         }
       }
     }
@@ -109,9 +109,9 @@ class FST {
   double CostOfChange(const State& next_state) const {
     switch (next_state) {
       case State::LANE_KEEP: return 0.0;
-      case State::SLOW_DOWN: return 0.1;
+      case State::SLOW_DOWN: return 1.0;
       case State::LANE_CHANGE_RIGHT:
-      case State::LANE_CHANGE_LEFT: return 0.9;
+      case State::LANE_CHANGE_LEFT: return 0.5;
     }
   }
 
