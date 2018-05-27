@@ -1,4 +1,5 @@
 #include <fstream>
+#include <assert.h>
 #include <math.h>
 #include <uWS/uWS.h>
 #include <chrono>
@@ -9,7 +10,7 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
 #include "spline.h"
-#include <assert.h>
+#include "fst.h"
 
 using namespace std;
 using json = nlohmann::json;
@@ -211,16 +212,16 @@ int main() {
   }
 
   double ref_v = 0;  // Reference velocity.
-  int lane = 1;  // Middle lane.
+  FST fst;
 
   h.onMessage([&map_waypoints_x,
                &map_waypoints_y,
                &map_waypoints_s,
                &map_waypoints_dx,
                &map_waypoints_dy,
-               &ref_v, &lane](uWS::WebSocket<uWS::SERVER> ws,
-                              char *data, size_t length,
-                              uWS::OpCode opCode) {
+               &ref_v, &fst](uWS::WebSocket<uWS::SERVER> ws,
+                             char *data, size_t length,
+                             uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -260,7 +261,7 @@ int main() {
           // Slow down if any of the other cars are too close.
           bool too_close = false;
           for (const vector<double>& other_car : sensor_fusion) {
-            if (is_in_lane(lane, other_car[kSensorFusionD])) {
+            if (is_in_lane(fst.lane, other_car[kSensorFusionD])) {
               double vx = other_car[kSensorFusionVx];
               double vy = other_car[kSensorFusionVy];
               double s = other_car[kSensorFusionS];
@@ -275,8 +276,8 @@ int main() {
                 // TODO: Check that it's safe to do so (e.g. that there isn't another car on that lane within 30 / 100 m).
                 // If it's not safe to change lanes left, we could instead attempt to change lanes right, where the same
                 // safety considerations apply. The FSM in the class might help with this decision.
-                if (lane > 0) {
-                  lane = 0;
+                if (fst.lane > 0) {
+                  fst.lane = 0;
                 } 
               }
             } 
@@ -316,9 +317,9 @@ int main() {
           push_point(ref_x, ref_y, &ptsx, &ptsy);
 
           // In Frenet coordinates, add points that are spaced evenly 30m apart, ahead of the starting reference.
-          push_point(getXY(car_s + 30, get_middle(lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
-          push_point(getXY(car_s + 60, get_middle(lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
-          push_point(getXY(car_s + 90, get_middle(lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 30, get_middle(fst.lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 60, get_middle(fst.lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 90, get_middle(fst.lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
 
           // Transform the points to the ego car's local coordinates.
           // This means that the last point of the previous path is at origin (x, y, yaw) = (0, 0, 0).
