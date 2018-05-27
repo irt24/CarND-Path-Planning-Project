@@ -16,6 +16,12 @@ struct Predictions {
 class Trajectory {
 };
 
+enum Lane {
+  LEFT = 0,
+  MIDDLE = 1,
+  RIGHT = 2, 
+};
+
 enum State {
   LANE_KEEP,
   PREPARE_LANE_CHANGE_LEFT,
@@ -24,11 +30,21 @@ enum State {
   LANE_CHANGE_RIGHT,
 };
 
-enum Lane {
-  LEFT = 0,
-  MIDDLE = 1,
-  RIGHT = 2, 
-};
+namespace {
+bool next_state_possible_from_lane(State next_state, Lane lane) {
+  if (lane == Lane::LEFT &&
+      (next_state == State::PREPARE_LANE_CHANGE_LEFT ||
+       next_state == State::LANE_CHANGE_LEFT)) {
+    return false;
+  }
+  if (lane == Lane::RIGHT &&
+      (next_state == State::PREPARE_LANE_CHANGE_RIGHT ||
+       next_state == State::LANE_CHANGE_RIGHT)) {
+    return false;
+  }
+  return true;
+}
+}  // end anonymous namespace.
 
 class FST {
  public:
@@ -40,16 +56,18 @@ class FST {
       return next_state == State::LANE_KEEP ? 0.0 : kInf; 
     }
 
-    // We are not in the leftmost lane.
-    // Figure out whether any of the other cars are too close.
-    for (const double other_s : predictions.other_car_s) {
-      if ((other_s > predictions.ego_s) &&
-          (other_s - predictions.ego_s < kSafeDistanceMeters)) {
-        cout << "Too close. Changing lanes to left." << endl;
-        return next_state == State::LANE_CHANGE_LEFT ? 0.0 : kInf;
+    if (next_state == State::LANE_CHANGE_LEFT) {
+      // Figure out whether any of the other cars are too close.
+      for (const double other_s : predictions.other_car_s) {
+        if ((other_s > predictions.ego_s) &&
+            (other_s - predictions.ego_s < kSafeDistanceMeters)) {
+          cout << "Too close. Changing lanes to left." << endl;
+          return 0.0;
+        }
       }
     }
-    return next_state == State::LANE_KEEP ? 0.0 : kInf;
+
+    return kInf;
   }
 
   static double cost2() { return 0.0; }
@@ -62,6 +80,9 @@ class FST {
 
     // Find the state with minimum cost.
     for (const State& state : possible_transitions.find(current_state)->second) {
+      if (!next_state_possible_from_lane(state, lane)) {
+        continue;
+      }
       double cost = cost1(predictions, state); 
       if (cost < min_cost) {
         min_cost = cost;
@@ -71,12 +92,12 @@ class FST {
 
     current_state = min_cost_state;
     if (current_state == State::LANE_CHANGE_LEFT) {
-      lane = Lane::LEFT;
+      lane = static_cast<Lane>(static_cast<int>(lane) - 1);
     } else if (current_state == State::LANE_CHANGE_RIGHT) {
-      lane = Lane::RIGHT;
+      lane = static_cast<Lane>(static_cast<int>(lane) + 1);
     }
     
-    return min_cost_state;
+    return current_state;
   }
 
   Trajectory GenerateTrajectory(State state) {
