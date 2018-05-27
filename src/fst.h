@@ -33,29 +33,6 @@ class FST {
  public:
   FST(Lane initial_lane) : current_lane(initial_lane) {}
 
-  double cost1(const Predictions& predictions, const State& next_state) const {
-    if (current_lane == Lane::LEFT) {
-      // Keep the lane.
-      return next_state == State::LANE_KEEP ? 0.0 : kInf; 
-    }
-
-    if (next_state == State::LANE_CHANGE_LEFT) {
-      // Figure out whether any of the other cars are too close.
-      for (const double other_s : predictions.other_car_s) {
-        if ((other_s > predictions.ego_s) &&
-            (other_s - predictions.ego_s < kSafeDistanceMeters)) {
-          cout << "Too close. Changing lanes to left." << endl;
-          return 0.0;
-        }
-      }
-    }
-
-    return kInf;
-  }
-
-  static double cost2() { return 0.0; }
-  static double cost3() { return 0.0; }
-
   // The transition function.
   void NextState(const Predictions& predictions) {
     State min_cost_state;
@@ -73,11 +50,10 @@ class FST {
     TransitionTo(min_cost_state);
   }
 
-  Trajectory GenerateTrajectory(State state) {
-    // TODO: Implement this method.
-    return Trajectory();
-  }
+  Lane current_lane;
+  State current_state = LANE_KEEP;
 
+ private:
   set<State> GetPossibleNextStates() const {
     set<State> valid_states = valid_transitions.find(current_state)->second;
     if (current_lane == Lane::LEFT) {
@@ -97,8 +73,25 @@ class FST {
     }
   }
 
-  Lane current_lane;
-  State current_state = LANE_KEEP;
+  double cost1(const Predictions& predictions, const State& next_state) const {
+    if (current_lane == Lane::LEFT) {
+      // Keep the lane.
+      return next_state == State::LANE_KEEP ? 0.0 : kInf; 
+    }
+
+    if (next_state == State::LANE_CHANGE_LEFT) {
+      // Figure out whether any of the other cars are too close.
+      for (const double other_s : predictions.other_car_s) {
+        if ((other_s > predictions.ego_s) &&
+            (other_s - predictions.ego_s < kSafeDistanceMeters)) {
+          cout << "Too close. Changing lanes to left." << endl;
+          return 0.0;
+        }
+      }
+    }
+
+    return kInf;
+  }
 
   const set<State> all_states =
       {LANE_KEEP,
