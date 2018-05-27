@@ -10,7 +10,7 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
 #include "spline.h"
-#include "fst.h"
+#include "fsm.h"
 
 using namespace std;
 using json = nlohmann::json;
@@ -205,14 +205,14 @@ int main() {
   }
 
   double ref_v = 0;  // Reference velocity.
-  FST fst(Lane::MIDDLE);
+  FSM fsm(Lane::MIDDLE);
 
   h.onMessage([&map_waypoints_x,
                &map_waypoints_y,
                &map_waypoints_s,
                &map_waypoints_dx,
                &map_waypoints_dy,
-               &ref_v, &fst](uWS::WebSocket<uWS::SERVER> ws,
+               &ref_v, &fsm](uWS::WebSocket<uWS::SERVER> ws,
                              char *data, size_t length,
                              uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -268,9 +268,9 @@ int main() {
           predictions.ego_s = car_s;
           predictions.other_cars_s = other_cars_s;
           predictions.other_cars_d = other_cars_d;
-          fst.NextState(predictions);
+          fsm.NextState(predictions);
 
-          if (fst.current_state == State::SLOW_DOWN) {
+          if (fsm.current_state == State::SLOW_DOWN) {
             ref_v -= mps_to_mph(0.1); 
           } else if (ref_v < kMaxSpeedMph) {
             ref_v += mps_to_mph(0.1); 
@@ -304,9 +304,9 @@ int main() {
           push_point(ref_x, ref_y, &ptsx, &ptsy);
 
           // In Frenet coordinates, add points that are spaced evenly 30m apart, ahead of the starting reference.
-          push_point(getXY(car_s + 30, get_middle(fst.current_lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
-          push_point(getXY(car_s + 60, get_middle(fst.current_lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
-          push_point(getXY(car_s + 90, get_middle(fst.current_lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 30, get_middle(fsm.current_lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 60, get_middle(fsm.current_lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
+          push_point(getXY(car_s + 90, get_middle(fsm.current_lane), map_waypoints_s, map_waypoints_x, map_waypoints_y), &ptsx, &ptsy);
 
           // Transform the points to the ego car's local coordinates.
           // This means that the last point of the previous path is at origin (x, y, yaw) = (0, 0, 0).

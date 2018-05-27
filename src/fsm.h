@@ -1,5 +1,5 @@
-#ifndef FST_H
-#define FST_H
+#ifndef FSM_H
+#define FSM_H
 
 #include <set>
 
@@ -40,9 +40,9 @@ bool CarIsOnLane(Lane lane, double d) {
 }
 }  // end anonymous namespace
 
-class FST {
+class FSM {
  public:
-  FST(Lane initial_lane) : current_lane(initial_lane) {}
+  FSM(Lane initial_lane) : current_lane(initial_lane) {}
 
   // The transition function.
   void NextState(const Predictions& predictions) {
@@ -133,4 +133,4 @@ class FST {
        {LANE_CHANGE_RIGHT, {LANE_KEEP}}};
 };
 
-#endif  // FST_H
+#endif  // FSM_H
