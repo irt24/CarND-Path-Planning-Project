@@ -28,7 +28,6 @@ const int kSensorFusionS = 5;
 const int kSensorFusionD = 6;
 
 const int kNumPointsAhead = 50;
-const int kSafeDistanceMeters = 30;
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -212,7 +211,7 @@ int main() {
   }
 
   double ref_v = 0;  // Reference velocity.
-  FST fst;
+  FST fst(Lane::MIDDLE);
 
   h.onMessage([&map_waypoints_x,
                &map_waypoints_y,
@@ -258,32 +257,27 @@ int main() {
              car_s = end_path_s;
           }
 
-          // Slow down if any of the other cars are too close.
-          bool too_close = false;
+          // Predict where the other cars will be in the future.
+          vector<double> other_car_s;
           for (const vector<double>& other_car : sensor_fusion) {
             if (is_in_lane(fst.lane, other_car[kSensorFusionD])) {
               double vx = other_car[kSensorFusionVx];
               double vy = other_car[kSensorFusionVy];
               double s = other_car[kSensorFusionS];
 
-              // Predict where the other car will be in the future.
               double v = sqrt(vx * vx + vy * vy);
               s += previous_path_x.size() * kTimeStepSeconds * v;
-
-              if (s > car_s && (s - car_s) < kSafeDistanceMeters) {
-                too_close = true;
-                // Attempt a lane change.
-                // TODO: Check that it's safe to do so (e.g. that there isn't another car on that lane within 30 / 100 m).
-                // If it's not safe to change lanes left, we could instead attempt to change lanes right, where the same
-                // safety considerations apply. The FSM in the class might help with this decision.
-                if (fst.lane > 0) {
-                  fst.lane = 0;
-                } 
-              }
+              other_car_s.push_back(s);
             } 
           }
 
-          if (too_close) {
+          Predictions predictions;
+          predictions.ego_s = car_s;
+          predictions.other_car_s = other_car_s;
+          State state = fst.NextState(predictions);
+
+          if (state == State::LANE_CHANGE_LEFT ||
+              state == State::LANE_CHANGE_RIGHT) {
             ref_v -= mps_to_mph(0.1); 
           } else if (ref_v < kMaxSpeedMph) {
             ref_v += mps_to_mph(0.1); 
